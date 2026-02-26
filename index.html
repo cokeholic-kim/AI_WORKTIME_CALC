@@ -274,7 +274,7 @@
         <div class="header-top">
             <h1>
                 🕒 AI 근무 시간 파서
-                <span class="badge-ai">Gemini Powered</span>
+                <span class="badge-ai">Multi-Model</span>
             </h1>
             <button id="convert-btn" class="btn">
                 <span>AI 변환 실행</span>
@@ -282,14 +282,26 @@
         </div>
         <div class="header-config">
             <div class="api-input-group">
-                <label for="api-key">Gemini API Key:</label>
-                <input type="password" id="api-key" placeholder="AI Studio에서 발급받은 키를 입력하세요" autocomplete="off">
+                <label for="provider">Provider:</label>
+                <select id="provider" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem; background: white;">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                </select>
+            </div>
+            <div class="api-input-group">
+                <label for="api-key" id="api-key-label">API Key:</label>
+                <input type="password" id="api-key" placeholder="API 키를 입력하세요" autocomplete="off">
+            </div>
+            <div class="api-input-group">
+                <label for="model-input">Model:</label>
+                <input type="text" id="model-input" placeholder="비워두면 기본/자동 모델 사용" autocomplete="off">
             </div>
             <div style="font-size: 0.8rem; color: #64748b;">
-                * 키는 브라우저에만 저장됩니다.
+                * 키/모델 설정은 브라우저(localStorage)에만 저장됩니다.
             </div>
             <div id="model-info" style="font-size: 0.8rem; color: #64748b;">
-                선택된 모델: <span id="model-name">-</span>
+                현재 모델: <span id="model-name">-</span>
             </div>
         </div>
     </header>
@@ -325,7 +337,7 @@
             <!-- 로딩 오버레이 -->
             <div id="loading-overlay" class="overlay hidden">
                 <div class="spinner"></div>
-                <div style="font-weight: 600; color: var(--text);">Gemini가 분석 중입니다...</div>
+                <div style="font-weight: 600; color: var(--text);">AI가 분석 중입니다...</div>
             </div>
         </section>
     </main>
@@ -340,217 +352,200 @@
                 clearBtn: document.getElementById('clear-btn'),
                 copyBtn: document.getElementById('copy-btn'),
                 tabs: document.querySelectorAll('.tab'),
+                providerSelect: document.getElementById('provider'),
                 apiKeyInput: document.getElementById('api-key'),
+                apiKeyLabel: document.getElementById('api-key-label'),
+                modelInput: document.getElementById('model-input'),
                 loadingOverlay: document.getElementById('loading-overlay'),
                 modelName: document.getElementById('model-name')
             };
 
-            // State
+            const PROVIDER_CONFIG = {
+                gemini: { label: 'Gemini API Key', keyPlaceholder: 'Google AI Studio API 키', modelPlaceholder: '예: gemini-2.0-flash (비우면 자동)', defaultModel: '' },
+                openai: { label: 'OpenAI API Key', keyPlaceholder: 'OpenAI API 키 (sk-...)', modelPlaceholder: '예: gpt-4o-mini', defaultModel: 'gpt-4o-mini' },
+                anthropic: { label: 'Anthropic API Key', keyPlaceholder: 'Anthropic API 키 (sk-ant-...)', modelPlaceholder: '예: claude-3-5-sonnet-latest', defaultModel: 'claude-3-5-sonnet-latest' }
+            };
+
             let state = {
                 parsedData: null,
                 currentView: 'json',
+                provider: 'gemini',
                 apiKey: '',
+                model: '',
                 isLoading: false,
                 chartInstance: null,
-                modelName: '',
-                modelCheckedAt: 0
+                modelName: ''
             };
 
-            // --- 1. Initialization ---
+            const MODEL_CACHE_KEY = 'gemini_latest_flash_model';
+            const MODEL_CACHE_AT_KEY = 'gemini_latest_flash_model_checked_at';
+            const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+            const providerKeyStorageKey = (provider) => `api_key_${provider}`;
+            const providerModelStorageKey = (provider) => `model_${provider}`;
+
             const init = () => {
                 loadState();
                 bindEvents();
+                applyProviderUI();
             };
 
             const loadState = () => {
-                const savedKey = localStorage.getItem('gemini_api_key');
-                if (savedKey) {
-                    state.apiKey = savedKey;
-                    els.apiKeyInput.value = savedKey;
+                const savedProvider = localStorage.getItem('ai_provider') || 'gemini';
+                state.provider = savedProvider;
+                els.providerSelect.value = savedProvider;
+                state.apiKey = localStorage.getItem(providerKeyStorageKey(savedProvider)) || '';
+                state.model = localStorage.getItem(providerModelStorageKey(savedProvider)) || '';
+                els.apiKeyInput.value = state.apiKey;
+                els.modelInput.value = state.model;
+                if (savedProvider === 'gemini') {
+                    const cachedModel = localStorage.getItem(MODEL_CACHE_KEY);
+                    if (cachedModel) setModelLabel(cachedModel);
                 }
+            };
 
-                // Show last selected model (cached) if available
-                const cachedModel = localStorage.getItem(MODEL_CACHE_KEY);
-                if (cachedModel) setModelLabel(cachedModel);
+            const applyProviderUI = () => {
+                const config = PROVIDER_CONFIG[state.provider];
+                els.apiKeyLabel.textContent = config.label + ':';
+                els.apiKeyInput.placeholder = config.keyPlaceholder;
+                els.modelInput.placeholder = config.modelPlaceholder;
+            };
 
-            };// --- Model Selection (Auto-latest) ---
-// We cannot use a "latest" alias in the Gemini REST API.
-// Instead, we fetch the model list and pick the newest *accessible* flash model (excluding preview).
-const MODEL_CACHE_KEY = 'gemini_latest_flash_model';
-const MODEL_CACHE_AT_KEY = 'gemini_latest_flash_model_checked_at';
-const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+            const parseVersionTuple = (name) => ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))).length ? ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))) : [0];
+            const compareVersionTupleDesc = (a, b) => {
+                const av = parseVersionTuple(a), bv = parseVersionTuple(b), len = Math.max(av.length, bv.length);
+                for (let i = 0; i < len; i++) { const ai = av[i] ?? 0, bi = bv[i] ?? 0; if (ai !== bi) return bi - ai; }
+                return a.length - b.length;
+            };
 
-const parseVersionTuple = (name) => {
-    // Extract all numeric parts and compare lexicographically, e.g. gemini-2.0-flash -> [2,0]
-    const nums = (name.match(/\d+(?:\.\d+)*/g) || [])
-        .flatMap(s => s.split('.').map(n => parseInt(n, 10)));
-    return nums.length ? nums : [0];
-};
+            const getLatestFlashModel = async (apiKey) => {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+                if (!res.ok) throw new Error(`Gemini 모델 조회 실패 (HTTP ${res.status})`);
+                const data = await res.json();
+                const models = (data.models || []).map(m => (m.name || '').replace('models/', '')).filter(Boolean);
+                const flashModels = models.filter(name => name.includes('flash') && !name.includes('preview') && !name.includes('experimental'));
+                const candidates = flashModels.length ? flashModels : models.filter(name => name.includes('flash'));
+                if (!candidates.length) throw new Error('사용 가능한 Gemini flash 모델을 찾지 못했습니다.');
+                candidates.sort(compareVersionTupleDesc);
+                return candidates[0];
+            };
+            const getLatestFlashModelCached = async (apiKey) => {
+                const cached = localStorage.getItem(MODEL_CACHE_KEY);
+                const cachedAt = parseInt(localStorage.getItem(MODEL_CACHE_AT_KEY) || '0', 10);
+                if (cached && cachedAt && (Date.now() - cachedAt) < MODEL_CACHE_TTL_MS) return cached;
+                const latest = await getLatestFlashModel(apiKey);
+                localStorage.setItem(MODEL_CACHE_KEY, latest);
+                localStorage.setItem(MODEL_CACHE_AT_KEY, String(Date.now()));
+                return latest;
+            };
 
-const compareVersionTupleDesc = (a, b) => {
-    const av = parseVersionTuple(a);
-    const bv = parseVersionTuple(b);
-    const len = Math.max(av.length, bv.length);
-    for (let i = 0; i < len; i++) {
-        const ai = av[i] ?? 0;
-        const bi = bv[i] ?? 0;
-        if (ai !== bi) return bi - ai; // desc
-    }
-    // If version equal, prefer shorter (more canonical) names
-    return a.length - b.length;
-};
+            const setModelLabel = (modelName) => {
+                state.modelName = modelName;
+                if (els.modelName) els.modelName.textContent = modelName || '-';
+            };
 
-const getLatestFlashModel = async (apiKey) => {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
-        method: 'GET'
-    });
+            const buildPrompt = (text) => {
+                const currentYear = new Date().getFullYear();
+                return `Context: You are a data parsing assistant.
+Goal: Parse the user's unstructured work log text into a strictly formatted JSON array.
+Current Year: ${currentYear} (Use this year if year is missing in input)
 
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`모델 목록 조회 실패 (HTTP ${res.status}): ${errText}`);
-    }
+Input Text:
+"""
+${text}
+"""
 
-    const data = await res.json();
-    const models = (data.models || []).map(m => (m.name || '').replace('models/', '')).filter(Boolean);
+Requirements:
+1. Identify dates and time ranges. Handle formats like "10,22", "10/22", "10월 22일".
+2. Handle time formats like "11:30", "14:00", "2pm".
+3. Group multiple sessions for the same date into one object.
+4. Calculate 'durationMinutes' for each session.
+5. Calculate 'totalMinutes' for the day.
+6. Identify the Day of the Week (Korean string: 월/화/수/목/금/토/일) for each date.
+7. Sort by date ascending.
+8. Output strictly valid JSON only. No markdown code blocks, no explanations.
 
-    // Prefer flash, exclude preview/experimental by default
-    const flashModels = models.filter(name =>
-        name.includes('flash') &&
-        !name.includes('preview') &&
-        !name.includes('experimental')
-    );
+Output JSON Structure:
+[
+  {
+    "date": "YYYY-MM-DD",
+    "dayOfWeek": "Korean string (e.g. '월', '화', '수')",
+    "sessions": [
+      { "start": "HH:MM", "end": "HH:MM", "durationMinutes": number, "note": "optional text if present" }
+    ],
+    "totalMinutes": number
+  }
+]`;
+            };
 
-    if (flashModels.length === 0) {
-        // Fallback: allow preview if that's all the key can access
-        const flashAny = models.filter(name => name.includes('flash'));
-        if (flashAny.length === 0) {
-            throw new Error('이 API 키로 접근 가능한 flash 모델을 찾지 못했습니다.');
-        }
-        flashAny.sort(compareVersionTupleDesc);
-        return flashAny[0];
-    }
+            const normalizeJsonFromText = (rawText) => {
+                let cleaned = (rawText || '').replace(/^```json\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+                const jsonMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+                const jsonText = (jsonMatch ? jsonMatch[1] : cleaned).trim();
+                return JSON.parse(jsonText);
+            };
 
-    flashModels.sort(compareVersionTupleDesc);
-    return flashModels[0];
-};
+            const callGemini = async ({ apiKey, model, prompt }) => {
+                const modelName = model || await getLatestFlashModelCached(apiKey);
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1 } })
+                });
+                if (!response.ok) throw new Error(`Gemini 호출 실패 (HTTP ${response.status})`);
+                const data = await response.json();
+                const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!rawText) throw new Error('Gemini 응답이 비어 있습니다.');
+                return { rawText, modelName };
+            };
+            const callOpenAI = async ({ apiKey, model, prompt }) => {
+                const modelName = model || PROVIDER_CONFIG.openai.defaultModel;
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({ model: modelName, temperature: 0.1, messages: [{ role: 'user', content: prompt }] })
+                });
+                if (!response.ok) throw new Error(`OpenAI 호출 실패 (HTTP ${response.status}): ${await response.text()}`);
+                const data = await response.json();
+                const rawText = data?.choices?.[0]?.message?.content;
+                if (!rawText) throw new Error('OpenAI 응답이 비어 있습니다.');
+                return { rawText, modelName };
+            };
+            const callAnthropic = async ({ apiKey, model, prompt }) => {
+                const modelName = model || PROVIDER_CONFIG.anthropic.defaultModel;
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+                    body: JSON.stringify({ model: modelName, max_tokens: 2048, temperature: 0.1, messages: [{ role: 'user', content: prompt }] })
+                });
+                if (!response.ok) throw new Error(`Anthropic 호출 실패 (HTTP ${response.status}): ${await response.text()}`);
+                const data = await response.json();
+                const rawText = (data?.content || []).map(c => c?.text || '').join('
+').trim();
+                if (!rawText) throw new Error('Anthropic 응답이 비어 있습니다.');
+                return { rawText, modelName };
+            };
 
-const getLatestFlashModelCached = async (apiKey) => {
-    const cached = localStorage.getItem(MODEL_CACHE_KEY);
-    const cachedAt = parseInt(localStorage.getItem(MODEL_CACHE_AT_KEY) || '0', 10);
-
-    if (cached && cachedAt && (Date.now() - cachedAt) < MODEL_CACHE_TTL_MS) {
-        return cached;
-    }
-
-    const latest = await getLatestFlashModel(apiKey);
-    localStorage.setItem(MODEL_CACHE_KEY, latest);
-    localStorage.setItem(MODEL_CACHE_AT_KEY, String(Date.now()));
-    return latest;
-};
-
-const setModelLabel = (modelName) => {
-    state.modelName = modelName;
-    if (els.modelName) els.modelName.textContent = modelName || '-';
-};
-
-            // --- 2. AI Parsing Logic (Gemini API) ---
-            const parseWithGemini = async () => {
+            const parseWithAI = async () => {
                 const text = els.input.value.trim();
                 const apiKey = els.apiKeyInput.value.trim();
-
-                if (!apiKey) {
-                    alert('Gemini API 키를 입력해주세요.');
-                    els.apiKeyInput.focus();
-                    return;
-                }
-                if (!text) {
-                    alert('변환할 텍스트를 입력해주세요.');
-                    els.input.focus();
-                    return;
-                }
-
-                state.apiKey = apiKey;
-                localStorage.setItem('gemini_api_key', apiKey);
+                const model = els.modelInput.value.trim();
+                const provider = els.providerSelect.value;
+                if (!apiKey) { alert(`${PROVIDER_CONFIG[provider].label}를 입력해주세요.`); els.apiKeyInput.focus(); return; }
+                if (!text) { alert('변환할 텍스트를 입력해주세요.'); els.input.focus(); return; }
+                state.provider = provider; state.apiKey = apiKey; state.model = model;
+                localStorage.setItem('ai_provider', provider);
+                localStorage.setItem(providerKeyStorageKey(provider), apiKey);
+                localStorage.setItem(providerModelStorageKey(provider), model);
+                const prompt = buildPrompt(text);
                 setLoading(true);
-
-                const currentYear = new Date().getFullYear();
-                const prompt = `
-                    Context: You are a data parsing assistant.
-                    Goal: Parse the user's unstructured work log text into a strictly formatted JSON array.
-                    Current Year: ${currentYear} (Use this year if year is missing in input)
-                    
-                    Input Text:
-                    """
-                    ${text}
-                    """
-
-                    Requirements:
-                    1. Identify dates and time ranges. Handle formats like "10,22", "10/22", "10월 22일".
-                    2. Handle time formats like "11:30", "14:00", "2pm".
-                    3. Group multiple sessions for the same date into one object.
-                    4. Calculate 'durationMinutes' for each session.
-                    5. Calculate 'totalMinutes' for the day.
-                    6. Identify the Day of the Week (Monday, Tuesday...) for each date.
-                    7. Sort by date ascending.
-                    8. Output strictly valid JSON only. No markdown code blocks, no explanations.
-
-                    Output JSON Structure:
-                    [
-                      {
-                        "date": "YYYY-MM-DD",
-                        "dayOfWeek": "Korean string (e.g. '월', '화', '수')",
-                        "sessions": [
-                          { "start": "HH:MM", "end": "HH:MM", "durationMinutes": number, "note": "optional text if present" }
-                        ],
-                        "totalMinutes": number
-                      }
-                    ]
-                `;
-
                 try {
-                    const modelName = await getLatestFlashModelCached(apiKey);
-                    setModelLabel(modelName);
-
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }],
-                            generationConfig: { temperature: 0.1 }
-                        })
-                    });
-
-                    if (!response.ok) {
-                        const errText = await response.text();
-                        throw new Error(`HTTP ${response.status} - ${errText}`);
-                    }
-
-                    const data = await response.json();
-                    if (data.error) throw new Error(data.error.message);
-                    if (!data.candidates || !data.candidates.length) throw new Error('AI 응답이 비어 있습니다.');
-
-                    let rawText = data.candidates[0].content.parts[0].text || '';
-
-                    // If the model wraps JSON in markdown or adds text, extract the first JSON array/object block.
-                    rawText = rawText.replace(/^```json\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-                    const jsonMatch = rawText.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-                    const jsonText = (jsonMatch ? jsonMatch[1] : rawText).trim();
-
-                    state.parsedData = JSON.parse(jsonText);
-                    
-                    // 기본 뷰를 '차트'로 전환하거나 유지
+                    const result = provider === 'gemini' ? await callGemini({ apiKey, model, prompt }) : provider === 'openai' ? await callOpenAI({ apiKey, model, prompt }) : await callAnthropic({ apiKey, model, prompt });
+                    setModelLabel(result.modelName || '-');
+                    state.parsedData = normalizeJsonFromText(result.rawText);
                     render();
-
                 } catch (error) {
                     console.error('AI Parsing Error:', error);
-                    els.outputContainer.innerHTML = `<div class="error-msg">
-                        <strong>오류 발생:</strong><br>${error.message}<br><br>
-                        API 키가 올바른지 확인하거나, 입력 형식을 조금 더 명확하게 수정해보세요.
-                    </div>`;
-                } finally {
-                    setLoading(false);
-                }
+                    els.outputContainer.innerHTML = `<div class="error-msg"><strong>오류 발생:</strong><br>${error.message}<br><br>API 키/모델을 확인하거나, 입력 형식을 조금 더 명확하게 수정해보세요.</div>`;
+                } finally { setLoading(false); }
             };
 
             const setLoading = (isLoading) => {
@@ -716,16 +711,32 @@ const setModelLabel = (modelName) => {
 
             // --- 4. Event Listeners ---
             const bindEvents = () => {
-                els.convertBtn.addEventListener('click', parseWithGemini);
+                els.convertBtn.addEventListener('click', parseWithAI);
+
+                els.providerSelect.addEventListener('change', (e) => {
+                    state.provider = e.target.value;
+                    localStorage.setItem('ai_provider', state.provider);
+                    state.apiKey = localStorage.getItem(providerKeyStorageKey(state.provider)) || '';
+                    state.model = localStorage.getItem(providerModelStorageKey(state.provider)) || '';
+                    els.apiKeyInput.value = state.apiKey;
+                    els.modelInput.value = state.model;
+                    applyProviderUI();
+                    setModelLabel(state.model || '-');
+                });
 
                 els.apiKeyInput.addEventListener('change', (e) => {
                     state.apiKey = e.target.value;
-                    localStorage.setItem('gemini_api_key', e.target.value);
+                    localStorage.setItem(providerKeyStorageKey(state.provider), e.target.value);
+                    if (state.provider === 'gemini') {
+                        localStorage.removeItem(MODEL_CACHE_KEY);
+                        localStorage.removeItem(MODEL_CACHE_AT_KEY);
+                    }
+                });
 
-                    // API 키가 바뀌면 모델 캐시를 무효화(키별 권한이 달라질 수 있음)
-                    localStorage.removeItem(MODEL_CACHE_KEY);
-                    localStorage.removeItem(MODEL_CACHE_AT_KEY);
-                    setModelLabel('');
+                els.modelInput.addEventListener('change', (e) => {
+                    state.model = e.target.value.trim();
+                    localStorage.setItem(providerModelStorageKey(state.provider), state.model);
+                    setModelLabel(state.model || '-');
                 });
 
                 els.tabs.forEach(tab => {

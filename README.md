@@ -1,11 +1,13 @@
 # AI_WORKTIME_CALC
 
-근무 기록 텍스트를 **Gemini API**로 파싱해 JSON/테이블/차트로 보여주는 단일 HTML 웹앱입니다.
+근무 기록 텍스트를 **여러 LLM API(Gemini/OpenAI/Anthropic)**로 파싱해 JSON/테이블/차트로 보여주는 단일 HTML 웹앱입니다.
 
 ## 주요 기능
 
 - 자유 형식 근무 텍스트 입력
-- Gemini 모델 자동 선택(가능한 최신 Flash 모델 탐색)
+- Provider 선택 지원: Gemini / OpenAI / Anthropic
+- Gemini는 모델 미입력 시 사용 가능한 최신 Flash 모델 자동 선택
+- OpenAI/Anthropic은 모델명 직접 입력 가능 (미입력 시 기본 모델 사용)
 - 결과를 3가지 뷰로 제공
   - JSON
   - 테이블(일자별 세션/합계)
@@ -24,9 +26,12 @@
 ## 동작 개요
 
 1. 사용자가 근무 로그 텍스트 입력
-2. Gemini API Key 입력
-3. 모델 목록 API(`/v1beta/models`)를 조회해 사용 가능한 최신 Flash 모델 선택
-4. `generateContent` 호출로 텍스트를 정규화된 JSON으로 변환
+2. Provider 선택 + API Key 입력 + (선택) 모델명 입력
+3. Provider별 API 호출
+   - Gemini: 모델 목록 API(`/v1beta/models`) 조회 후 최신 Flash 자동 선택 가능
+   - OpenAI: `/v1/chat/completions`
+   - Anthropic: `/v1/messages`
+4. 응답 텍스트에서 JSON 블록 추출/파싱
 5. 변환 결과를 JSON/테이블/차트로 렌더링
 
 ## JSON 출력 스키마(요약)
@@ -54,13 +59,15 @@
 별도 빌드 없이 정적 파일로 실행 가능합니다.
 
 - VSCode Live Server 또는 임의의 정적 서버에서 `index.html` 오픈
-- Gemini API Key 입력 후 사용
+- Provider 선택 후 해당 API Key 입력하여 사용
 
 ## 사용 기술
 
 - Vanilla JavaScript
 - Chart.js (CDN)
 - Gemini REST API (`v1beta/models`, `:generateContent`)
+- OpenAI REST API (`/v1/chat/completions`)
+- Anthropic REST API (`/v1/messages`)
 
 ## 보안/운영 주의사항
 
