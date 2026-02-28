@@ -297,8 +297,16 @@
                 <label for="model-input">Model:</label>
                 <input type="text" id="model-input" placeholder="비워두면 기본/자동 모델 사용" autocomplete="off">
             </div>
+            <div class="api-input-group">
+                <label for="storage-mode">키 저장:</label>
+                <select id="storage-mode" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem; background: white;">
+                    <option value="local">브라우저 저장(localStorage)</option>
+                    <option value="session">현재 탭만(sessionStorage)</option>
+                    <option value="none">저장 안 함</option>
+                </select>
+            </div>
             <div style="font-size: 0.8rem; color: #64748b;">
-                * 키/모델 설정은 브라우저(localStorage)에만 저장됩니다.
+                * 선택한 저장 모드에 따라 API 키/모델을 보관합니다.
             </div>
             <div id="model-info" style="font-size: 0.8rem; color: #64748b;">
                 현재 모델: <span id="model-name">-</span>
@@ -311,7 +319,16 @@
         <section class="panel">
             <div class="panel-header">
                 <span>입력 (Raw Text)</span>
-                <button id="clear-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">지우기</button>
+                <div style="display:flex; gap:0.4rem; align-items:center;">
+                    <select id="preset-select" style="padding: 0.25rem 0.4rem; border:1px solid #cbd5e1; border-radius: 4px; font-size:0.8rem;">
+                        <option value="">예시 선택</option>
+                        <option value="single">단일 세션</option>
+                        <option value="multi">다중 세션</option>
+                        <option value="memo">메모 포함</option>
+                    </select>
+                    <button id="apply-preset-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">예시삽입</button>
+                    <button id="clear-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">지우기</button>
+                </div>
             </div>
             <div class="panel-body">
                 <textarea id="input-text" placeholder="근무 기록을 자유롭게 입력하세요. (AI가 형식을 파악합니다)&#13;&#10;&#13;&#10;[예시]&#13;&#10;10,22 11:30 ~ 12:40 점심시간 제외하고 근무&#13;&#10;10월 22일 오후 2시부터 6시까지 회의&#13;&#10;10/23 09:00 - 12:00 오전 근무, 13:00 - 18:00 오후 근무"></textarea>
@@ -326,7 +343,11 @@
                     <div class="tab" data-view="table">테이블</div>
                     <div class="tab" data-view="chart">📈 차트</div>
                 </div>
-                <button id="copy-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">복사</button>
+                <div style="display:flex; gap:0.35rem;">
+                    <button id="download-json-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">JSON 다운로드</button>
+                    <button id="download-csv-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">CSV 다운로드</button>
+                    <button id="copy-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">복사</button>
+                </div>
             </div>
             <div class="panel-body" id="output-container">
                 <div style="padding: 2rem; text-align: center; color: #94a3b8;">
@@ -357,7 +378,12 @@
                 apiKeyLabel: document.getElementById('api-key-label'),
                 modelInput: document.getElementById('model-input'),
                 loadingOverlay: document.getElementById('loading-overlay'),
-                modelName: document.getElementById('model-name')
+                modelName: document.getElementById('model-name'),
+                storageMode: document.getElementById('storage-mode'),
+                presetSelect: document.getElementById('preset-select'),
+                applyPresetBtn: document.getElementById('apply-preset-btn'),
+                downloadJsonBtn: document.getElementById('download-json-btn'),
+                downloadCsvBtn: document.getElementById('download-csv-btn')
             };
 
             const PROVIDER_CONFIG = {
@@ -374,7 +400,8 @@
                 model: '',
                 isLoading: false,
                 chartInstance: null,
-                modelName: ''
+                modelName: '',
+                storageMode: 'local'
             };
 
             const MODEL_CACHE_KEY = 'gemini_latest_flash_model';
@@ -382,6 +409,34 @@
             const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
             const providerKeyStorageKey = (provider) => `api_key_${provider}`;
             const providerModelStorageKey = (provider) => `model_${provider}`;
+
+            const readStorage = (key) => {
+                if (state.storageMode === 'session') return sessionStorage.getItem(key);
+                if (state.storageMode === 'none') return null;
+                return localStorage.getItem(key);
+            };
+
+            const writeStorage = (key, value) => {
+                if (state.storageMode === 'none') return;
+                if (state.storageMode === 'session') {
+                    sessionStorage.setItem(key, value);
+                    localStorage.removeItem(key);
+                } else {
+                    localStorage.setItem(key, value);
+                    sessionStorage.removeItem(key);
+                }
+            };
+
+            const clearStorageForKey = (key) => {
+                localStorage.removeItem(key);
+                sessionStorage.removeItem(key);
+            };
+
+            const SAMPLE_INPUTS = {
+                single: '10/23 09:00 - 12:00 오전 근무',
+                multi: '10/23 09:00 - 12:00 오전 근무\n10/23 13:00 - 18:00 오후 근무',
+                memo: '10월 24일 오후 2시부터 6시까지 회의\n10/24 19:00~20:30 문서작업'
+            };
 
             const init = () => {
                 loadState();
@@ -393,8 +448,10 @@
                 const savedProvider = localStorage.getItem('ai_provider') || 'gemini';
                 state.provider = savedProvider;
                 els.providerSelect.value = savedProvider;
-                state.apiKey = localStorage.getItem(providerKeyStorageKey(savedProvider)) || '';
-                state.model = localStorage.getItem(providerModelStorageKey(savedProvider)) || '';
+                state.storageMode = localStorage.getItem('ai_storage_mode') || 'local';
+                els.storageMode.value = state.storageMode;
+                state.apiKey = readStorage(providerKeyStorageKey(savedProvider)) || '';
+                state.model = readStorage(providerModelStorageKey(savedProvider)) || '';
                 els.apiKeyInput.value = state.apiKey;
                 els.modelInput.value = state.model;
                 if (savedProvider === 'gemini') {
@@ -518,8 +575,7 @@ Output JSON Structure:
                 });
                 if (!response.ok) throw new Error(`Anthropic 호출 실패 (HTTP ${response.status}): ${await response.text()}`);
                 const data = await response.json();
-                const rawText = (data?.content || []).map(c => c?.text || '').join('
-').trim();
+                const rawText = (data?.content || []).map(c => c?.text || '').join('\n').trim();
                 if (!rawText) throw new Error('Anthropic 응답이 비어 있습니다.');
                 return { rawText, modelName };
             };
@@ -533,8 +589,8 @@ Output JSON Structure:
                 if (!text) { alert('변환할 텍스트를 입력해주세요.'); els.input.focus(); return; }
                 state.provider = provider; state.apiKey = apiKey; state.model = model;
                 localStorage.setItem('ai_provider', provider);
-                localStorage.setItem(providerKeyStorageKey(provider), apiKey);
-                localStorage.setItem(providerModelStorageKey(provider), model);
+                writeStorage(providerKeyStorageKey(provider), apiKey);
+                writeStorage(providerModelStorageKey(provider), model);
                 const prompt = buildPrompt(text);
                 setLoading(true);
                 try {
@@ -544,8 +600,21 @@ Output JSON Structure:
                     render();
                 } catch (error) {
                     console.error('AI Parsing Error:', error);
-                    els.outputContainer.innerHTML = `<div class="error-msg"><strong>오류 발생:</strong><br>${error.message}<br><br>API 키/모델을 확인하거나, 입력 형식을 조금 더 명확하게 수정해보세요.</div>`;
+                    const friendly = mapErrorMessage(error);
+                    els.outputContainer.innerHTML = `<div class="error-msg"><strong>오류 발생:</strong><br>${friendly}<br><br><button id="retry-btn" class="btn-outline" style="margin-top:8px;">다시 시도</button></div>`;
+                    const retryBtn = document.getElementById('retry-btn');
+                    if (retryBtn) retryBtn.addEventListener('click', parseWithAI);
                 } finally { setLoading(false); }
+            };
+
+            const mapErrorMessage = (error) => {
+                const msg = String(error?.message || '알 수 없는 오류');
+                if (msg.includes('401') || msg.includes('403')) return '인증 실패: API 키 권한 또는 키 값을 확인해주세요.';
+                if (msg.includes('404')) return '모델 또는 엔드포인트를 찾지 못했습니다. 모델명을 확인해주세요.';
+                if (msg.includes('429')) return '요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.';
+                if (msg.includes('500') || msg.includes('502') || msg.includes('503')) return 'AI 서비스 서버 오류입니다. 잠시 후 다시 시도해주세요.';
+                if (msg.toLowerCase().includes('failed to fetch')) return '네트워크 연결 오류입니다. 인터넷/방화벽 상태를 확인해주세요.';
+                return msg;
             };
 
             const setLoading = (isLoading) => {
@@ -703,6 +772,36 @@ Output JSON Structure:
                 return `${m}분`;
             };
 
+            const toCsv = (data) => {
+                const rows = [['date','dayOfWeek','start','end','durationMinutes','note','totalMinutes']];
+                data.forEach(d => (d.sessions || []).forEach(s => rows.push([
+                    d.date || '',
+                    d.dayOfWeek || '',
+                    s.start || '',
+                    s.end || '',
+                    String(s.durationMinutes ?? ''),
+                    String(s.note || '').replaceAll('"', '""'),
+                    String(d.totalMinutes ?? '')
+                ])));
+                return rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
+            };
+
+            const downloadFile = (filename, content, type='text/plain;charset=utf-8') => {
+                const blob = new Blob([content], { type });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const tsFile = () => {
+                const d = new Date();
+                const p=(n)=>String(n).padStart(2,'0');
+                return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+            };
+
             const escapeHtml = (str) => {
                 return str.replace(/[&<>"']/g, m => ({
                     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -716,8 +815,8 @@ Output JSON Structure:
                 els.providerSelect.addEventListener('change', (e) => {
                     state.provider = e.target.value;
                     localStorage.setItem('ai_provider', state.provider);
-                    state.apiKey = localStorage.getItem(providerKeyStorageKey(state.provider)) || '';
-                    state.model = localStorage.getItem(providerModelStorageKey(state.provider)) || '';
+                    state.apiKey = readStorage(providerKeyStorageKey(state.provider)) || '';
+                    state.model = readStorage(providerModelStorageKey(state.provider)) || '';
                     els.apiKeyInput.value = state.apiKey;
                     els.modelInput.value = state.model;
                     applyProviderUI();
@@ -726,7 +825,7 @@ Output JSON Structure:
 
                 els.apiKeyInput.addEventListener('change', (e) => {
                     state.apiKey = e.target.value;
-                    localStorage.setItem(providerKeyStorageKey(state.provider), e.target.value);
+                    writeStorage(providerKeyStorageKey(state.provider), e.target.value);
                     if (state.provider === 'gemini') {
                         localStorage.removeItem(MODEL_CACHE_KEY);
                         localStorage.removeItem(MODEL_CACHE_AT_KEY);
@@ -735,7 +834,7 @@ Output JSON Structure:
 
                 els.modelInput.addEventListener('change', (e) => {
                     state.model = e.target.value.trim();
-                    localStorage.setItem(providerModelStorageKey(state.provider), state.model);
+                    writeStorage(providerModelStorageKey(state.provider), state.model);
                     setModelLabel(state.model || '-');
                 });
 
@@ -757,6 +856,43 @@ Output JSON Structure:
                         els.copyBtn.innerText = "JSON 복사됨!";
                         setTimeout(() => els.copyBtn.innerText = originalText, 2000);
                     });
+                });
+
+                els.storageMode.addEventListener('change', (e) => {
+                    const prevMode = state.storageMode;
+                    state.storageMode = e.target.value;
+                    localStorage.setItem('ai_storage_mode', state.storageMode);
+
+                    const keyK = providerKeyStorageKey(state.provider);
+                    const modelK = providerModelStorageKey(state.provider);
+                    const prevRead = (k) => prevMode === 'session' ? sessionStorage.getItem(k) : localStorage.getItem(k);
+                    const keyVal = prevRead(keyK) || state.apiKey || '';
+                    const modelVal = prevRead(modelK) || state.model || '';
+
+                    clearStorageForKey(keyK);
+                    clearStorageForKey(modelK);
+
+                    if (state.storageMode !== 'none') {
+                        writeStorage(keyK, keyVal);
+                        writeStorage(modelK, modelVal);
+                    }
+                });
+
+                els.applyPresetBtn.addEventListener('click', () => {
+                    const v = els.presetSelect.value;
+                    if (!v || !SAMPLE_INPUTS[v]) return;
+                    if (els.input.value.trim() && !confirm('현재 입력 내용을 예시로 덮어쓸까요?')) return;
+                    els.input.value = SAMPLE_INPUTS[v];
+                });
+
+                els.downloadJsonBtn.addEventListener('click', () => {
+                    if (!state.parsedData) return;
+                    downloadFile(`worklog-${tsFile()}.json`, JSON.stringify(state.parsedData, null, 2), 'application/json;charset=utf-8');
+                });
+
+                els.downloadCsvBtn.addEventListener('click', () => {
+                    if (!state.parsedData) return;
+                    downloadFile(`worklog-${tsFile()}.csv`, '\ufeff' + toCsv(state.parsedData), 'text/csv;charset=utf-8');
                 });
 
                 els.clearBtn.addEventListener('click', () => {
