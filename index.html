@@ -340,6 +340,7 @@
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                 </select>
+                <button id="refresh-models-btn" class="btn-outline" style="padding: 0.35rem 0.55rem; font-size: 0.78rem; white-space: nowrap;">모델 불러오기</button>
             </div>
             <div class="api-input-group">
                 <label for="api-key" id="api-key-label">API Key:</label>
@@ -360,8 +361,8 @@
                     <option value="none">저장 안 함</option>
                 </select>
             </div>
-            <div class="header-help">
-                * 기본은 모델 자동 선택입니다. 필요할 때만 고급 설정에서 직접 지정하세요.
+            <div class="header-help" id="model-source-help">
+                * 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 사용 가능한 모델을 동기화할 수 있습니다.
             </div>
             <div class="header-help">
                 * 선택한 저장 모드에 따라 API 키/모델을 보관합니다.
@@ -438,7 +439,9 @@
                 presetSelect: document.getElementById('preset-select'),
                 applyPresetBtn: document.getElementById('apply-preset-btn'),
                 downloadJsonBtn: document.getElementById('download-json-btn'),
-                downloadCsvBtn: document.getElementById('download-csv-btn')
+                downloadCsvBtn: document.getElementById('download-csv-btn'),
+                refreshModelsBtn: document.getElementById('refresh-models-btn'),
+                modelSourceHelp: document.getElementById('model-source-help')
             };
 
             const PROVIDER_CONFIG = {
@@ -502,6 +505,7 @@
                 loadState();
                 bindEvents();
                 applyProviderUI();
+                    setModelSourceHelp('* 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 동기화할 수 있습니다.');
             };
 
             const loadState = () => {
@@ -535,6 +539,72 @@
                 }
                 els.modelInput.value = current || models[0] || '';
                 state.model = els.modelInput.value;
+            };
+
+            const setModelSourceHelp = (text) => {
+                if (els.modelSourceHelp) els.modelSourceHelp.textContent = text;
+            };
+
+            const updateProviderModels = (provider, models) => {
+                if (!Array.isArray(models) || !models.length) return;
+                PROVIDER_MODELS[provider] = [...new Set(models)];
+                if (state.provider === provider) refreshModelOptions();
+            };
+
+            const fetchGeminiModels = async (apiKey) => {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+                if (!res.ok) throw new Error(`Gemini 모델 조회 실패 (HTTP ${res.status})`);
+                const data = await res.json();
+                const models = (data.models || [])
+                    .map(m => (m.name || '').replace('models/', ''))
+                    .filter(name => name && !name.includes('embedding') && !name.includes('aqa'));
+                return [...new Set(models)].sort();
+            };
+
+            const fetchOpenAIModels = async (apiKey) => {
+                const res = await fetch('https://api.openai.com/v1/models', {
+                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                });
+                if (!res.ok) throw new Error(`OpenAI 모델 조회 실패 (HTTP ${res.status})`);
+                const data = await res.json();
+                const models = (data.data || [])
+                    .map(m => m.id)
+                    .filter(Boolean)
+                    .filter(id => id.startsWith('gpt-'));
+                return [...new Set(models)].sort();
+            };
+
+            const fetchModelsByProvider = async () => {
+                const provider = state.provider;
+                const apiKey = els.apiKeyInput.value.trim();
+                if (!apiKey) {
+                    alert(`${PROVIDER_CONFIG[provider].label}를 먼저 입력해주세요.`);
+                    els.apiKeyInput.focus();
+                    return;
+                }
+                try {
+                    els.refreshModelsBtn.disabled = true;
+                    els.refreshModelsBtn.textContent = '불러오는 중...';
+                    let models = [];
+                    if (provider === 'gemini') {
+                        models = await fetchGeminiModels(apiKey);
+                        setModelSourceHelp(`* Gemini API에서 ${models.length}개 모델을 불러왔습니다.`);
+                    } else if (provider === 'openai') {
+                        models = await fetchOpenAIModels(apiKey);
+                        setModelSourceHelp(`* OpenAI API에서 ${models.length}개 모델을 불러왔습니다.`);
+                    } else {
+                        // Anthropic은 모델 목록 API 제한 이슈가 있어 안전한 기본 목록 유지
+                        models = PROVIDER_MODELS.anthropic;
+                        setModelSourceHelp('* Anthropic은 기본 모델 목록을 사용합니다.');
+                    }
+                    updateProviderModels(provider, models);
+                } catch (e) {
+                    setModelSourceHelp(`* 모델 조회 실패: ${e.message} (기본 목록 사용)`);
+                    alert(`모델 조회 실패: ${e.message}`);
+                } finally {
+                    els.refreshModelsBtn.disabled = false;
+                    els.refreshModelsBtn.textContent = '모델 불러오기';
+                }
             };
 
             const parseVersionTuple = (name) => ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))).length ? ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))) : [0];
@@ -875,6 +945,7 @@ Output JSON Structure:
             // --- 4. Event Listeners ---
             const bindEvents = () => {
                 els.convertBtn.addEventListener('click', parseWithAI);
+                els.refreshModelsBtn.addEventListener('click', fetchModelsByProvider);
 
                 els.providerSelect.addEventListener('change', (e) => {
                     state.provider = e.target.value;
@@ -884,6 +955,7 @@ Output JSON Structure:
                     els.apiKeyInput.value = state.apiKey;
                     els.modelInput.value = state.model;
                     applyProviderUI();
+                    setModelSourceHelp('* 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 동기화할 수 있습니다.');
                 });
 
                 els.apiKeyInput.addEventListener('change', (e) => {
