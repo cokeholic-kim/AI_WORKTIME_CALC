@@ -554,7 +554,13 @@
             const refreshModelOptions = () => {
                 const models = (PROVIDER_MODELS[state.provider] || []).filter(m => isCompatibleTextModel(state.provider, m));
                 const current = state.model || PROVIDER_CONFIG[state.provider].defaultModel;
-                els.modelInput.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+                els.modelInput.replaceChildren();
+                models.forEach((modelName) => {
+                    const opt = document.createElement('option');
+                    opt.value = modelName;
+                    opt.textContent = modelName;
+                    els.modelInput.appendChild(opt);
+                });
                 if (!models.includes(current) && current) {
                     const opt = document.createElement('option');
                     opt.value = current;
@@ -759,9 +765,23 @@ Output JSON Structure:
                 } catch (error) {
                     console.error('AI Parsing Error:', error);
                     const friendly = mapErrorMessage(error);
-                    els.outputContainer.innerHTML = `<div class="error-msg"><strong>오류 발생:</strong><br>${friendly}<br><br><button id="retry-btn" class="btn-outline" style="margin-top:8px;">다시 시도</button></div>`;
-                    const retryBtn = document.getElementById('retry-btn');
-                    if (retryBtn) retryBtn.addEventListener('click', parseWithAI);
+                    const errorBox = document.createElement('div');
+                    errorBox.className = 'error-msg';
+                    const title = document.createElement('strong');
+                    title.textContent = '오류 발생:';
+                    const br1 = document.createElement('br');
+                    const message = document.createElement('span');
+                    message.textContent = friendly;
+                    const br2 = document.createElement('br');
+                    const br3 = document.createElement('br');
+                    const retryBtn = document.createElement('button');
+                    retryBtn.id = 'retry-btn';
+                    retryBtn.className = 'btn-outline';
+                    retryBtn.style.marginTop = '8px';
+                    retryBtn.textContent = '다시 시도';
+                    errorBox.append(title, br1, message, br2, br3, retryBtn);
+                    els.outputContainer.replaceChildren(errorBox);
+                    retryBtn.addEventListener('click', parseWithAI);
                 } finally { setLoading(false); }
             };
 
@@ -794,7 +814,11 @@ Output JSON Structure:
 
                 if (!parsedData) return;
                 if (parsedData.length === 0) {
-                    els.outputContainer.innerHTML = `<div style="padding:2rem;text-align:center;">분석된 데이터가 없습니다.</div>`;
+                    const empty = document.createElement('div');
+                    empty.style.padding = '2rem';
+                    empty.style.textAlign = 'center';
+                    empty.textContent = '분석된 데이터가 없습니다.';
+                    els.outputContainer.replaceChildren(empty);
                     return;
                 }
 
@@ -815,51 +839,79 @@ Output JSON Structure:
 
             const renderJSON = () => {
                 const jsonString = JSON.stringify(state.parsedData, null, 2);
-                els.outputContainer.innerHTML = `<div class="json-output">${escapeHtml(jsonString)}</div>`;
+                const jsonOutput = document.createElement('div');
+                jsonOutput.className = 'json-output';
+                jsonOutput.textContent = jsonString;
+                els.outputContainer.replaceChildren(jsonOutput);
             };
 
             const renderTable = () => {
                 // 총 근무시간 합계 계산
                 const grandTotalMinutes = state.parsedData.reduce((sum, item) => sum + item.totalMinutes, 0);
 
-                const html = `
-                    <div style="padding: 1rem;">
-                        <div class="total-summary">
-                            총 근무 시간 합계: ${formatMinutes(grandTotalMinutes)}
-                        </div>
-                        <table class="table-view">
-                            <thead>
-                                <tr>
-                                    <th style="width: 140px">날짜</th>
-                                    <th>세션 정보 (시간 / 메모)</th>
-                                    <th style="width: 100px">일일 합계</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${state.parsedData.map(item => `
-                                    <tr>
-                                        <td>
-                                            ${item.date} 
-                                            <span class="day-badge">(${item.dayOfWeek || '-'})</span>
-                                        </td>
-                                        <td>
-                                            ${item.sessions.map(s => 
-                                                `<div class="tag">
-                                                    ${s.start} ~ ${s.end} (${formatMinutes(s.durationMinutes)})
-                                                    ${s.note ? `<span style="color:#666; font-size:0.75rem;">| ${s.note}</span>` : ''}
-                                                </div>`
-                                            ).join('')}
-                                        </td>
-                                        <td style="font-weight:bold; color:var(--primary);">
-                                            ${formatMinutes(item.totalMinutes)}
-                                        </td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-                els.outputContainer.innerHTML = html;
+                const wrapper = document.createElement('div');
+                wrapper.style.padding = '1rem';
+
+                const totalSummary = document.createElement('div');
+                totalSummary.className = 'total-summary';
+                totalSummary.textContent = `총 근무 시간 합계: ${formatMinutes(grandTotalMinutes)}`;
+                wrapper.appendChild(totalSummary);
+
+                const table = document.createElement('table');
+                table.className = 'table-view';
+
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                const thDate = document.createElement('th');
+                thDate.style.width = '140px';
+                thDate.textContent = '날짜';
+                const thSessions = document.createElement('th');
+                thSessions.textContent = '세션 정보 (시간 / 메모)';
+                const thTotal = document.createElement('th');
+                thTotal.style.width = '100px';
+                thTotal.textContent = '일일 합계';
+                headerRow.append(thDate, thSessions, thTotal);
+                thead.appendChild(headerRow);
+
+                const tbody = document.createElement('tbody');
+                state.parsedData.forEach((item) => {
+                    const row = document.createElement('tr');
+
+                    const dateCell = document.createElement('td');
+                    const dateText = document.createTextNode(`${item.date || ''} `);
+                    const dayBadge = document.createElement('span');
+                    dayBadge.className = 'day-badge';
+                    dayBadge.textContent = `(${item.dayOfWeek || '-'})`;
+                    dateCell.append(dateText, dayBadge);
+
+                    const sessionsCell = document.createElement('td');
+                    (item.sessions || []).forEach((s) => {
+                        const tag = document.createElement('div');
+                        tag.className = 'tag';
+                        tag.appendChild(document.createTextNode(`${s.start || ''} ~ ${s.end || ''} (${formatMinutes(s.durationMinutes || 0)})`));
+                        if (s.note) {
+                            const note = document.createElement('span');
+                            note.style.color = '#666';
+                            note.style.fontSize = '0.75rem';
+                            note.textContent = `| ${s.note}`;
+                            tag.appendChild(document.createTextNode(' '));
+                            tag.appendChild(note);
+                        }
+                        sessionsCell.appendChild(tag);
+                    });
+
+                    const totalCell = document.createElement('td');
+                    totalCell.style.fontWeight = 'bold';
+                    totalCell.style.color = 'var(--primary)';
+                    totalCell.textContent = formatMinutes(item.totalMinutes || 0);
+
+                    row.append(dateCell, sessionsCell, totalCell);
+                    tbody.appendChild(row);
+                });
+
+                table.append(thead, tbody);
+                wrapper.appendChild(table);
+                els.outputContainer.replaceChildren(wrapper);
             };
 
             const renderChart = () => {
@@ -960,11 +1012,6 @@ Output JSON Structure:
                 return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
             };
 
-            const escapeHtml = (str) => {
-                return str.replace(/[&<>"']/g, m => ({
-                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-                })[m]);
-            };
 
             // --- 4. Event Listeners ---
             const bindEvents = () => {
