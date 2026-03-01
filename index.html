@@ -61,17 +61,43 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            flex: 1;
-            max-width: 600px;
+            flex: 1 1 280px;
+            min-width: 240px;
+            max-width: 100%;
         }
         .api-input-group label { font-size: 0.85rem; font-weight: 600; color: var(--text-light); white-space: nowrap; }
-        .api-input-group input {
+        .api-input-group input,
+        .api-input-group select {
             flex: 1;
+            min-width: 0;
             padding: 0.4rem 0.6rem;
             border: 1px solid #cbd5e1;
             border-radius: 4px;
             font-size: 0.85rem;
             background: white;
+        }
+
+        .header-help {
+            flex: 1 1 100%;
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+
+        .advanced-settings {
+            flex: 1 1 100%;
+            border: 1px dashed #cbd5e1;
+            border-radius: 6px;
+            padding: 0.5rem;
+            background: #ffffff;
+        }
+        .advanced-settings summary {
+            cursor: pointer;
+            font-size: 0.82rem;
+            color: #475569;
+            user-select: none;
+        }
+        .advanced-settings > .api-input-group {
+            margin-top: 0.5rem;
         }
 
         main {
@@ -82,9 +108,35 @@
             overflow: hidden;
         }
 
+        @media (max-width: 1024px) {
+            .header-top {
+                padding: 0.8rem 1rem;
+                flex-wrap: wrap;
+                gap: 0.6rem;
+            }
+            .header-config {
+                padding: 0.8rem 1rem;
+                flex-wrap: wrap;
+                align-items: flex-start;
+            }
+            .panel-header {
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
+        }
+
         @media (max-width: 768px) {
+            body { height: auto; min-height: 100vh; }
             main { flex-direction: column; overflow: auto; }
+            .panel { min-height: 360px; }
+            .chart-wrapper { min-height: 260px; }
             .header-config { padding: 1rem; flex-direction: column; align-items: stretch; }
+            .api-input-group { min-width: 100%; }
+            .panel-header-actions {
+                width: 100%;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+            }
         }
 
         /* Panels */
@@ -288,15 +340,19 @@
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                 </select>
+                <button id="refresh-models-btn" class="btn-outline" style="padding: 0.35rem 0.55rem; font-size: 0.78rem; white-space: nowrap;">모델 불러오기</button>
             </div>
             <div class="api-input-group">
                 <label for="api-key" id="api-key-label">API Key:</label>
                 <input type="password" id="api-key" placeholder="API 키를 입력하세요" autocomplete="off">
             </div>
-            <div class="api-input-group">
-                <label for="model-input">Model:</label>
-                <input type="text" id="model-input" placeholder="비워두면 기본/자동 모델 사용" autocomplete="off">
-            </div>
+            <details class="advanced-settings">
+                <summary>고급 설정 (모델 선택)</summary>
+                <div class="api-input-group">
+                    <label for="model-input">Model:</label>
+                    <select id="model-input"></select>
+                </div>
+            </details>
             <div class="api-input-group">
                 <label for="storage-mode">키 저장:</label>
                 <select id="storage-mode" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem; background: white;">
@@ -305,12 +361,13 @@
                     <option value="none">저장 안 함</option>
                 </select>
             </div>
-            <div style="font-size: 0.8rem; color: #64748b;">
+            <div class="header-help" id="model-source-help">
+                * 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 사용 가능한 모델을 동기화할 수 있습니다.
+            </div>
+            <div class="header-help">
                 * 선택한 저장 모드에 따라 API 키/모델을 보관합니다.
             </div>
-            <div id="model-info" style="font-size: 0.8rem; color: #64748b;">
-                현재 모델: <span id="model-name">-</span>
-            </div>
+
         </div>
     </header>
 
@@ -319,7 +376,7 @@
         <section class="panel">
             <div class="panel-header">
                 <span>입력 (Raw Text)</span>
-                <div style="display:flex; gap:0.4rem; align-items:center;">
+                <div class="panel-header-actions" style="display:flex; gap:0.4rem; align-items:center;">
                     <select id="preset-select" style="padding: 0.25rem 0.4rem; border:1px solid #cbd5e1; border-radius: 4px; font-size:0.8rem;">
                         <option value="">예시 선택</option>
                         <option value="single">단일 세션</option>
@@ -343,7 +400,7 @@
                     <div class="tab" data-view="table">테이블</div>
                     <div class="tab" data-view="chart">📈 차트</div>
                 </div>
-                <div style="display:flex; gap:0.35rem;">
+                <div class="panel-header-actions" style="display:flex; gap:0.35rem;">
                     <button id="download-json-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">JSON 다운로드</button>
                     <button id="download-csv-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">CSV 다운로드</button>
                     <button id="copy-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">복사</button>
@@ -378,18 +435,49 @@
                 apiKeyLabel: document.getElementById('api-key-label'),
                 modelInput: document.getElementById('model-input'),
                 loadingOverlay: document.getElementById('loading-overlay'),
-                modelName: document.getElementById('model-name'),
                 storageMode: document.getElementById('storage-mode'),
                 presetSelect: document.getElementById('preset-select'),
                 applyPresetBtn: document.getElementById('apply-preset-btn'),
                 downloadJsonBtn: document.getElementById('download-json-btn'),
-                downloadCsvBtn: document.getElementById('download-csv-btn')
+                downloadCsvBtn: document.getElementById('download-csv-btn'),
+                refreshModelsBtn: document.getElementById('refresh-models-btn'),
+                modelSourceHelp: document.getElementById('model-source-help')
             };
 
             const PROVIDER_CONFIG = {
-                gemini: { label: 'Gemini API Key', keyPlaceholder: 'Google AI Studio API 키', modelPlaceholder: '예: gemini-2.0-flash (비우면 자동)', defaultModel: '' },
-                openai: { label: 'OpenAI API Key', keyPlaceholder: 'OpenAI API 키 (sk-...)', modelPlaceholder: '예: gpt-4o-mini', defaultModel: 'gpt-4o-mini' },
-                anthropic: { label: 'Anthropic API Key', keyPlaceholder: 'Anthropic API 키 (sk-ant-...)', modelPlaceholder: '예: claude-3-5-sonnet-latest', defaultModel: 'claude-3-5-sonnet-latest' }
+                gemini: { label: 'Gemini API Key', keyPlaceholder: 'Google AI Studio API 키', defaultModel: 'gemini-2.0-flash' },
+                openai: { label: 'OpenAI API Key', keyPlaceholder: 'OpenAI API 키 (sk-...)', defaultModel: 'gpt-4o-mini' },
+                anthropic: { label: 'Anthropic API Key', keyPlaceholder: 'Anthropic API 키 (sk-ant-...)', defaultModel: 'claude-3-5-sonnet-latest' }
+            };
+
+            const PROVIDER_MODELS = {
+                gemini: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+                openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+                anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest']
+            };
+
+
+            const isCompatibleTextModel = (provider, modelId) => {
+                const id = String(modelId || '').toLowerCase();
+                if (!id) return false;
+
+                if (provider === 'gemini') {
+                    // 텍스트 파싱 용도 기준: gemini 계열 중 flash/pro 허용, 영상/이미지/임베딩 계열 제외
+                    if (!id.includes('gemini')) return false;
+                    if (id.includes('veo') || id.includes('imagen') || id.includes('embedding') || id.includes('aqa')) return false;
+                    if (id.includes('nano') || id.includes('banana')) return false;
+                    return id.includes('flash') || id.includes('pro');
+                }
+
+                if (provider === 'openai') {
+                    return id.startsWith('gpt-');
+                }
+
+                if (provider === 'anthropic') {
+                    return id.startsWith('claude-');
+                }
+
+                return false;
             };
 
             let state = {
@@ -400,7 +488,6 @@
                 model: '',
                 isLoading: false,
                 chartInstance: null,
-                modelName: '',
                 storageMode: 'local'
             };
 
@@ -442,6 +529,7 @@
                 loadState();
                 bindEvents();
                 applyProviderUI();
+                    setModelSourceHelp('* 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 동기화할 수 있습니다.');
             };
 
             const loadState = () => {
@@ -454,17 +542,93 @@
                 state.model = readStorage(providerModelStorageKey(savedProvider)) || '';
                 els.apiKeyInput.value = state.apiKey;
                 els.modelInput.value = state.model;
-                if (savedProvider === 'gemini') {
-                    const cachedModel = localStorage.getItem(MODEL_CACHE_KEY);
-                    if (cachedModel) setModelLabel(cachedModel);
-                }
             };
 
             const applyProviderUI = () => {
                 const config = PROVIDER_CONFIG[state.provider];
                 els.apiKeyLabel.textContent = config.label + ':';
                 els.apiKeyInput.placeholder = config.keyPlaceholder;
-                els.modelInput.placeholder = config.modelPlaceholder;
+                refreshModelOptions();
+            };
+
+            const refreshModelOptions = () => {
+                const models = (PROVIDER_MODELS[state.provider] || []).filter(m => isCompatibleTextModel(state.provider, m));
+                const current = state.model || PROVIDER_CONFIG[state.provider].defaultModel;
+                els.modelInput.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+                if (!models.includes(current) && current) {
+                    const opt = document.createElement('option');
+                    opt.value = current;
+                    opt.textContent = `${current} (저장된 값)`;
+                    els.modelInput.prepend(opt);
+                }
+                els.modelInput.value = current || models[0] || '';
+                state.model = els.modelInput.value;
+            };
+
+            const setModelSourceHelp = (text) => {
+                if (els.modelSourceHelp) els.modelSourceHelp.textContent = text;
+            };
+
+            const updateProviderModels = (provider, models) => {
+                if (!Array.isArray(models) || !models.length) return;
+                PROVIDER_MODELS[provider] = [...new Set(models)].filter(m => isCompatibleTextModel(provider, m));
+                if (state.provider === provider) refreshModelOptions();
+            };
+
+            const fetchGeminiModels = async (apiKey) => {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+                if (!res.ok) throw new Error(`Gemini 모델 조회 실패 (HTTP ${res.status})`);
+                const data = await res.json();
+                const models = (data.models || [])
+                    .map(m => (m.name || '').replace('models/', ''))
+                    .filter(name => isCompatibleTextModel('gemini', name));
+                return [...new Set(models)].sort();
+            };
+
+            const fetchOpenAIModels = async (apiKey) => {
+                const res = await fetch('https://api.openai.com/v1/models', {
+                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                });
+                if (!res.ok) throw new Error(`OpenAI 모델 조회 실패 (HTTP ${res.status})`);
+                const data = await res.json();
+                const models = (data.data || [])
+                    .map(m => m.id)
+                    .filter(Boolean)
+                    .filter(id => isCompatibleTextModel('openai', id));
+                return [...new Set(models)].sort();
+            };
+
+            const fetchModelsByProvider = async () => {
+                const provider = state.provider;
+                const apiKey = els.apiKeyInput.value.trim();
+                if (!apiKey) {
+                    alert(`${PROVIDER_CONFIG[provider].label}를 먼저 입력해주세요.`);
+                    els.apiKeyInput.focus();
+                    return;
+                }
+                try {
+                    els.refreshModelsBtn.disabled = true;
+                    els.refreshModelsBtn.textContent = '불러오는 중...';
+                    let models = [];
+                    if (provider === 'gemini') {
+                        models = await fetchGeminiModels(apiKey);
+                        setModelSourceHelp(`* Gemini API에서 텍스트 호환 모델 ${models.length}개를 불러왔습니다.`);
+                    } else if (provider === 'openai') {
+                        models = await fetchOpenAIModels(apiKey);
+                        setModelSourceHelp(`* OpenAI API에서 텍스트 호환 모델 ${models.length}개를 불러왔습니다.`);
+                    } else {
+                        // Anthropic은 모델 목록 API 제한 이슈가 있어 안전한 기본 목록 유지
+                        models = PROVIDER_MODELS.anthropic;
+                        setModelSourceHelp('* Anthropic은 기본 모델 목록을 사용합니다.');
+                    }
+                    updateProviderModels(provider, models);
+                } catch (e) {
+                    setModelSourceHelp(`* 모델 조회 실패: ${e.message} (기본 목록 사용)`);
+                    alert(`모델 조회 실패: ${e.message}`);
+                } finally {
+                    els.refreshModelsBtn.disabled = false;
+                    els.refreshModelsBtn.textContent = '모델 불러오기';
+                }
             };
 
             const parseVersionTuple = (name) => ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))).length ? ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))) : [0];
@@ -493,11 +657,6 @@
                 localStorage.setItem(MODEL_CACHE_KEY, latest);
                 localStorage.setItem(MODEL_CACHE_AT_KEY, String(Date.now()));
                 return latest;
-            };
-
-            const setModelLabel = (modelName) => {
-                state.modelName = modelName;
-                if (els.modelName) els.modelName.textContent = modelName || '-';
             };
 
             const buildPrompt = (text) => {
@@ -583,7 +742,7 @@ Output JSON Structure:
             const parseWithAI = async () => {
                 const text = els.input.value.trim();
                 const apiKey = els.apiKeyInput.value.trim();
-                const model = els.modelInput.value.trim();
+                const model = els.modelInput.value;
                 const provider = els.providerSelect.value;
                 if (!apiKey) { alert(`${PROVIDER_CONFIG[provider].label}를 입력해주세요.`); els.apiKeyInput.focus(); return; }
                 if (!text) { alert('변환할 텍스트를 입력해주세요.'); els.input.focus(); return; }
@@ -595,7 +754,6 @@ Output JSON Structure:
                 setLoading(true);
                 try {
                     const result = provider === 'gemini' ? await callGemini({ apiKey, model, prompt }) : provider === 'openai' ? await callOpenAI({ apiKey, model, prompt }) : await callAnthropic({ apiKey, model, prompt });
-                    setModelLabel(result.modelName || '-');
                     state.parsedData = normalizeJsonFromText(result.rawText);
                     render();
                 } catch (error) {
@@ -811,6 +969,7 @@ Output JSON Structure:
             // --- 4. Event Listeners ---
             const bindEvents = () => {
                 els.convertBtn.addEventListener('click', parseWithAI);
+                els.refreshModelsBtn.addEventListener('click', fetchModelsByProvider);
 
                 els.providerSelect.addEventListener('change', (e) => {
                     state.provider = e.target.value;
@@ -820,7 +979,7 @@ Output JSON Structure:
                     els.apiKeyInput.value = state.apiKey;
                     els.modelInput.value = state.model;
                     applyProviderUI();
-                    setModelLabel(state.model || '-');
+                    setModelSourceHelp('* 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 동기화할 수 있습니다.');
                 });
 
                 els.apiKeyInput.addEventListener('change', (e) => {
@@ -833,9 +992,8 @@ Output JSON Structure:
                 });
 
                 els.modelInput.addEventListener('change', (e) => {
-                    state.model = e.target.value.trim();
+                    state.model = e.target.value;
                     writeStorage(providerModelStorageKey(state.provider), state.model);
-                    setModelLabel(state.model || '-');
                 });
 
                 els.tabs.forEach(tab => {
