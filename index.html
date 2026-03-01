@@ -456,6 +456,30 @@
                 anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest']
             };
 
+
+            const isCompatibleTextModel = (provider, modelId) => {
+                const id = String(modelId || '').toLowerCase();
+                if (!id) return false;
+
+                if (provider === 'gemini') {
+                    // 텍스트 파싱 용도 기준: gemini 계열 중 flash/pro 허용, 영상/이미지/임베딩 계열 제외
+                    if (!id.includes('gemini')) return false;
+                    if (id.includes('veo') || id.includes('imagen') || id.includes('embedding') || id.includes('aqa')) return false;
+                    if (id.includes('nano') || id.includes('banana')) return false;
+                    return id.includes('flash') || id.includes('pro');
+                }
+
+                if (provider === 'openai') {
+                    return id.startsWith('gpt-');
+                }
+
+                if (provider === 'anthropic') {
+                    return id.startsWith('claude-');
+                }
+
+                return false;
+            };
+
             let state = {
                 parsedData: null,
                 currentView: 'json',
@@ -528,7 +552,7 @@
             };
 
             const refreshModelOptions = () => {
-                const models = PROVIDER_MODELS[state.provider] || [];
+                const models = (PROVIDER_MODELS[state.provider] || []).filter(m => isCompatibleTextModel(state.provider, m));
                 const current = state.model || PROVIDER_CONFIG[state.provider].defaultModel;
                 els.modelInput.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
                 if (!models.includes(current) && current) {
@@ -547,7 +571,7 @@
 
             const updateProviderModels = (provider, models) => {
                 if (!Array.isArray(models) || !models.length) return;
-                PROVIDER_MODELS[provider] = [...new Set(models)];
+                PROVIDER_MODELS[provider] = [...new Set(models)].filter(m => isCompatibleTextModel(provider, m));
                 if (state.provider === provider) refreshModelOptions();
             };
 
@@ -557,7 +581,7 @@
                 const data = await res.json();
                 const models = (data.models || [])
                     .map(m => (m.name || '').replace('models/', ''))
-                    .filter(name => name && !name.includes('embedding') && !name.includes('aqa'));
+                    .filter(name => isCompatibleTextModel('gemini', name));
                 return [...new Set(models)].sort();
             };
 
@@ -570,7 +594,7 @@
                 const models = (data.data || [])
                     .map(m => m.id)
                     .filter(Boolean)
-                    .filter(id => id.startsWith('gpt-'));
+                    .filter(id => isCompatibleTextModel('openai', id));
                 return [...new Set(models)].sort();
             };
 
@@ -588,10 +612,10 @@
                     let models = [];
                     if (provider === 'gemini') {
                         models = await fetchGeminiModels(apiKey);
-                        setModelSourceHelp(`* Gemini API에서 ${models.length}개 모델을 불러왔습니다.`);
+                        setModelSourceHelp(`* Gemini API에서 텍스트 호환 모델 ${models.length}개를 불러왔습니다.`);
                     } else if (provider === 'openai') {
                         models = await fetchOpenAIModels(apiKey);
-                        setModelSourceHelp(`* OpenAI API에서 ${models.length}개 모델을 불러왔습니다.`);
+                        setModelSourceHelp(`* OpenAI API에서 텍스트 호환 모델 ${models.length}개를 불러왔습니다.`);
                     } else {
                         // Anthropic은 모델 목록 API 제한 이슈가 있어 안전한 기본 목록 유지
                         models = PROVIDER_MODELS.anthropic;
