@@ -346,10 +346,10 @@
                 <input type="password" id="api-key" placeholder="API 키를 입력하세요" autocomplete="off">
             </div>
             <details class="advanced-settings">
-                <summary>고급 설정 (모델 직접 지정)</summary>
+                <summary>고급 설정 (모델 선택)</summary>
                 <div class="api-input-group">
                     <label for="model-input">Model:</label>
-                    <input type="text" id="model-input" placeholder="비워두면 자동 선택" autocomplete="off">
+                    <select id="model-input"></select>
                 </div>
             </details>
             <div class="api-input-group">
@@ -366,9 +366,7 @@
             <div class="header-help">
                 * 선택한 저장 모드에 따라 API 키/모델을 보관합니다.
             </div>
-            <div id="model-info" class="header-help">
-                현재 모델: <span id="model-name">-</span>
-            </div>
+
         </div>
     </header>
 
@@ -436,7 +434,6 @@
                 apiKeyLabel: document.getElementById('api-key-label'),
                 modelInput: document.getElementById('model-input'),
                 loadingOverlay: document.getElementById('loading-overlay'),
-                modelName: document.getElementById('model-name'),
                 storageMode: document.getElementById('storage-mode'),
                 presetSelect: document.getElementById('preset-select'),
                 applyPresetBtn: document.getElementById('apply-preset-btn'),
@@ -445,9 +442,15 @@
             };
 
             const PROVIDER_CONFIG = {
-                gemini: { label: 'Gemini API Key', keyPlaceholder: 'Google AI Studio API 키', modelPlaceholder: '예: gemini-2.0-flash (비우면 자동)', defaultModel: '' },
-                openai: { label: 'OpenAI API Key', keyPlaceholder: 'OpenAI API 키 (sk-...)', modelPlaceholder: '예: gpt-4o-mini', defaultModel: 'gpt-4o-mini' },
-                anthropic: { label: 'Anthropic API Key', keyPlaceholder: 'Anthropic API 키 (sk-ant-...)', modelPlaceholder: '예: claude-3-5-sonnet-latest', defaultModel: 'claude-3-5-sonnet-latest' }
+                gemini: { label: 'Gemini API Key', keyPlaceholder: 'Google AI Studio API 키', defaultModel: 'gemini-2.0-flash' },
+                openai: { label: 'OpenAI API Key', keyPlaceholder: 'OpenAI API 키 (sk-...)', defaultModel: 'gpt-4o-mini' },
+                anthropic: { label: 'Anthropic API Key', keyPlaceholder: 'Anthropic API 키 (sk-ant-...)', defaultModel: 'claude-3-5-sonnet-latest' }
+            };
+
+            const PROVIDER_MODELS = {
+                gemini: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+                openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+                anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest']
             };
 
             let state = {
@@ -458,7 +461,6 @@
                 model: '',
                 isLoading: false,
                 chartInstance: null,
-                modelName: '',
                 storageMode: 'local'
             };
 
@@ -512,17 +514,27 @@
                 state.model = readStorage(providerModelStorageKey(savedProvider)) || '';
                 els.apiKeyInput.value = state.apiKey;
                 els.modelInput.value = state.model;
-                if (savedProvider === 'gemini') {
-                    const cachedModel = localStorage.getItem(MODEL_CACHE_KEY);
-                    if (cachedModel) setModelLabel(cachedModel);
-                }
             };
 
             const applyProviderUI = () => {
                 const config = PROVIDER_CONFIG[state.provider];
                 els.apiKeyLabel.textContent = config.label + ':';
                 els.apiKeyInput.placeholder = config.keyPlaceholder;
-                els.modelInput.placeholder = config.modelPlaceholder;
+                refreshModelOptions();
+            };
+
+            const refreshModelOptions = () => {
+                const models = PROVIDER_MODELS[state.provider] || [];
+                const current = state.model || PROVIDER_CONFIG[state.provider].defaultModel;
+                els.modelInput.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+                if (!models.includes(current) && current) {
+                    const opt = document.createElement('option');
+                    opt.value = current;
+                    opt.textContent = `${current} (저장된 값)`;
+                    els.modelInput.prepend(opt);
+                }
+                els.modelInput.value = current || models[0] || '';
+                state.model = els.modelInput.value;
             };
 
             const parseVersionTuple = (name) => ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))).length ? ((name.match(/\d+(?:\.\d+)*/g) || []).flatMap(s => s.split('.').map(n => parseInt(n, 10)))) : [0];
@@ -551,11 +563,6 @@
                 localStorage.setItem(MODEL_CACHE_KEY, latest);
                 localStorage.setItem(MODEL_CACHE_AT_KEY, String(Date.now()));
                 return latest;
-            };
-
-            const setModelLabel = (modelName) => {
-                state.modelName = modelName;
-                if (els.modelName) els.modelName.textContent = modelName || '-';
             };
 
             const buildPrompt = (text) => {
@@ -641,7 +648,7 @@ Output JSON Structure:
             const parseWithAI = async () => {
                 const text = els.input.value.trim();
                 const apiKey = els.apiKeyInput.value.trim();
-                const model = els.modelInput.value.trim();
+                const model = els.modelInput.value;
                 const provider = els.providerSelect.value;
                 if (!apiKey) { alert(`${PROVIDER_CONFIG[provider].label}를 입력해주세요.`); els.apiKeyInput.focus(); return; }
                 if (!text) { alert('변환할 텍스트를 입력해주세요.'); els.input.focus(); return; }
@@ -653,7 +660,6 @@ Output JSON Structure:
                 setLoading(true);
                 try {
                     const result = provider === 'gemini' ? await callGemini({ apiKey, model, prompt }) : provider === 'openai' ? await callOpenAI({ apiKey, model, prompt }) : await callAnthropic({ apiKey, model, prompt });
-                    setModelLabel(result.modelName || '-');
                     state.parsedData = normalizeJsonFromText(result.rawText);
                     render();
                 } catch (error) {
@@ -878,7 +884,6 @@ Output JSON Structure:
                     els.apiKeyInput.value = state.apiKey;
                     els.modelInput.value = state.model;
                     applyProviderUI();
-                    setModelLabel(state.model || '-');
                 });
 
                 els.apiKeyInput.addEventListener('change', (e) => {
@@ -891,9 +896,8 @@ Output JSON Structure:
                 });
 
                 els.modelInput.addEventListener('change', (e) => {
-                    state.model = e.target.value.trim();
+                    state.model = e.target.value;
                     writeStorage(providerModelStorageKey(state.provider), state.model);
-                    setModelLabel(state.model || '-');
                 });
 
                 els.tabs.forEach(tab => {
